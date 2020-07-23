@@ -1,14 +1,12 @@
-'use strict';
-
-Object.defineProperty(exports, '__esModule', { value: true });
 
 function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
 
-var _ = _interopDefault(require('lodash'));
-var fs = _interopDefault(require('fs'));
-var iconv = _interopDefault(require('iconv-lite'));
-var ubjson = require('@shelacek/ubjson');
-var semver = _interopDefault(require('semver'));
+let _ = _interopDefault(require('lodash')),
+    fs = _interopDefault(require('fs')),
+    iconv = _interopDefault(require('iconv-lite')),
+    ubjson = require('@shelacek/ubjson'),
+    semver = _interopDefault(require('semver')),
+    info = require('./info');
 
 function toHalfwidth(str) {
     // Code reference from https://github.com/sampathsris/ascii-fullwidth-halfwidth-convert
@@ -167,7 +165,8 @@ function getMessageSizes(ref, position) {
  * Iterates through slp events and parses payloads
  */
 function iterateEvents(slpFile, callback, startPos = null) {
-    const ref = slpFile.ref;
+    const ref = slpFile.ref,
+        slpObj = {};
     let readPosition = startPos || slpFile.rawDataPosition;
     const stopReadingAt = slpFile.rawDataPosition + slpFile.rawDataLength;
     // Generate read buffers for each
@@ -185,7 +184,7 @@ function iterateEvents(slpFile, callback, startPos = null) {
             return readPosition;
         }
         readRef(ref, buffer, 0, buffer.length, readPosition);
-        const parsedPayload = parseMessage(commandByte, buffer);
+        const parsedPayload = parseMessage(commandByte, buffer, slpObj);
         const shouldStop = callback(commandByte, parsedPayload);
         if (shouldStop) {
             break;
@@ -194,11 +193,11 @@ function iterateEvents(slpFile, callback, startPos = null) {
     }
     return readPosition;
 }
-function parseMessage(command, payload) {
+function parseMessage(command, payload, slpObj) {
     const view = new DataView(payload.buffer);
     switch (command) {
         case exports.Command.GAME_START:
-            return {
+            let startObj = {
                 slpVersion: `${readUint8(view, 0x1)}.${readUint8(view, 0x2)}.${readUint8(view, 0x3)}`,
                 isTeams: readBool(view, 0xD),
                 isPAL: readBool(view, 0x1A1),
@@ -237,6 +236,8 @@ function parseMessage(command, payload) {
                     };
                 }),
             };
+            slpObj.version = +startObj.slpVersion.split('.').slice(0, 1).join('.')
+            return startObj;
         case exports.Command.PRE_FRAME_UPDATE:
             return {
                 frame: readInt32(view, 0x1),
@@ -259,7 +260,7 @@ function parseMessage(command, payload) {
                 percent: readFloat(view, 0x3C),
             };
         case exports.Command.POST_FRAME_UPDATE:
-            return {
+            let postObj = {
                 frame: readInt32(view, 0x1),
                 playerIndex: readUint8(view, 0x5),
                 isFollower: readBool(view, 0x6),
@@ -275,8 +276,26 @@ function parseMessage(command, payload) {
                 lastHitBy: readUint8(view, 0x20),
                 stocksRemaining: readUint8(view, 0x21),
                 actionStateCounter: readFloat(view, 0x22),
-                lCancelStatus: readUint8(view, 0x33),
             };
+            if (slpObj.version >= 2.0) {
+                postObj.stateBitFlags1 = readUint8(view, 0x26);
+                postObj.stateBitFlags2 = readUint8(view, 0x27);
+                postObj.stateBitFlags3 = readUint8(view, 0x28);
+                postObj.stateBitFlags4 = readUint8(view, 0x29);
+                postObj.stateBitFlags5 = readUint8(view, 0x2A);
+                postObj.miscActionState = readFloat(view, 0x2B);
+                postObj.airborne = readBool(view, 0x2F);
+                postObj.lastGroundId = readUint16(view, 0x30);
+                postObj.jumpsRemaining = readUint8(view, 0x32);
+                postObj.lCancelStatus = readUint8(view, 0x33);
+            };
+            if (slpObj.slpVersion >= 2.1){
+                postObj.hurtboxCollisionState = readUint8(view, 0x34);
+            }
+            if (slpObj.slpVersion >= 3.5){
+                // TODO Figure out what the speeds are and add here
+            }
+            return postObj;
         case exports.Command.ITEM_UPDATE:
             return {
                 frame: readInt32(view, 0x1),
@@ -370,49 +389,6 @@ function getMetadata(slpFile) {
     return metadata;
 }
 
-(function (State) {
-    // Animation ID ranges
-    State[State["DAMAGE_START"] = 75] = "DAMAGE_START";
-    State[State["DAMAGE_END"] = 91] = "DAMAGE_END";
-    State[State["CAPTURE_START"] = 223] = "CAPTURE_START";
-    State[State["CAPTURE_END"] = 232] = "CAPTURE_END";
-    State[State["GUARD_START"] = 178] = "GUARD_START";
-    State[State["GUARD_END"] = 182] = "GUARD_END";
-    State[State["GROUNDED_CONTROL_START"] = 14] = "GROUNDED_CONTROL_START";
-    State[State["GROUNDED_CONTROL_END"] = 24] = "GROUNDED_CONTROL_END";
-    State[State["SQUAT_START"] = 39] = "SQUAT_START";
-    State[State["SQUAT_END"] = 41] = "SQUAT_END";
-    State[State["DOWN_START"] = 183] = "DOWN_START";
-    State[State["DOWN_END"] = 198] = "DOWN_END";
-    State[State["TECH_START"] = 199] = "TECH_START";
-    State[State["TECH_END"] = 204] = "TECH_END";
-    State[State["DYING_START"] = 0] = "DYING_START";
-    State[State["DYING_END"] = 10] = "DYING_END";
-    State[State["CONTROLLED_JUMP_START"] = 24] = "CONTROLLED_JUMP_START";
-    State[State["CONTROLLED_JUMP_END"] = 34] = "CONTROLLED_JUMP_END";
-    State[State["GROUND_ATTACK_START"] = 44] = "GROUND_ATTACK_START";
-    State[State["GROUND_ATTACK_END"] = 64] = "GROUND_ATTACK_END";
-    // Animation ID specific
-    State[State["ROLL_FORWARD"] = 233] = "ROLL_FORWARD";
-    State[State["ROLL_BACKWARD"] = 234] = "ROLL_BACKWARD";
-    State[State["SPOT_DODGE"] = 235] = "SPOT_DODGE";
-    State[State["AIR_DODGE"] = 236] = "AIR_DODGE";
-    State[State["ACTION_WAIT"] = 14] = "ACTION_WAIT";
-    State[State["ACTION_DASH"] = 20] = "ACTION_DASH";
-    State[State["ACTION_KNEE_BEND"] = 24] = "ACTION_KNEE_BEND";
-    State[State["GUARD_ON"] = 178] = "GUARD_ON";
-    State[State["TECH_MISS_UP"] = 183] = "TECH_MISS_UP";
-    State[State["TECH_MISS_DOWN"] = 191] = "TECH_MISS_DOWN";
-    State[State["DASH"] = 20] = "DASH";
-    State[State["TURN"] = 18] = "TURN";
-    State[State["LANDING_FALL_SPECIAL"] = 43] = "LANDING_FALL_SPECIAL";
-    State[State["JUMP_FORWARD"] = 25] = "JUMP_FORWARD";
-    State[State["JUMP_BACKWARD"] = 26] = "JUMP_BACKWARD";
-    State[State["FALL_FORWARD"] = 30] = "FALL_FORWARD";
-    State[State["FALL_BACKWARD"] = 31] = "FALL_BACKWARD";
-    State[State["GRAB"] = 212] = "GRAB";
-    State[State["CLIFF_CATCH"] = 252] = "CLIFF_CATCH";
-})(exports.State || (exports.State = {}));
 const Timers = {
     PUNISH_RESET_FRAMES: 45,
     RECOVERY_RESET_FRAMES: 45,
@@ -444,27 +420,27 @@ function didLoseStock(frame, prevFrame) {
     return (prevFrame.stocksRemaining - frame.stocksRemaining) > 0;
 }
 function isInControl(state) {
-    const ground = state >= exports.State.GROUNDED_CONTROL_START && state <= exports.State.GROUNDED_CONTROL_END;
-    const squat = state >= exports.State.SQUAT_START && state <= exports.State.SQUAT_END;
-    const groundAttack = state > exports.State.GROUND_ATTACK_START && state <= exports.State.GROUND_ATTACK_END;
-    const isGrab = state === exports.State.GRAB;
+    const ground = state >= info.state.GROUNDED_CONTROL_START && state <= info.state.GROUNDED_CONTROL_END;
+    const squat = state >= info.state.SQUAT_START && state <= info.state.SQUAT_END;
+    const groundAttack = state > info.state.GROUND_ATTACK_START && state <= info.state.GROUND_ATTACK_END;
+    const isGrab = state === info.state.GRAB;
     // TODO: Add grounded b moves?
     return ground || squat || groundAttack || isGrab;
 }
 function isTeching(state) {
-    return state >= exports.State.TECH_START && state <= exports.State.TECH_END;
+    return state >= info.state.TECH_START && state <= info.state.TECH_END;
 }
 function isDown(state) {
-    return state >= exports.State.DOWN_START && state <= exports.State.DOWN_END;
+    return state >= info.state.DOWN_START && state <= info.state.DOWN_END;
 }
 function isDamaged(state) {
-    return state >= exports.State.DAMAGE_START && state <= exports.State.DAMAGE_END;
+    return state >= info.state.DAMAGE_START && state <= info.state.DAMAGE_END;
 }
 function isGrabbed(state) {
-    return state >= exports.State.CAPTURE_START && state <= exports.State.CAPTURE_END;
+    return state >= info.state.CAPTURE_START && state <= info.state.CAPTURE_END;
 }
 function isDead(state) {
-    return state >= exports.State.DYING_START && state <= exports.State.DYING_END;
+    return state >= info.state.DYING_START && state <= info.state.DYING_END;
 }
 function calcDamageTaken(frame, prevFrame) {
     const percent = _.get(frame, 'percent', 0);
@@ -474,7 +450,7 @@ function calcDamageTaken(frame, prevFrame) {
 
 // @flow
 // Frame pattern that indicates a dash dance turn was executed
-const dashDanceAnimations = [exports.State.DASH, exports.State.TURN, exports.State.DASH];
+const dashDanceAnimations = [info.state.DASH, info.state.TURN, info.state.DASH];
 class ActionsComputer {
     constructor() {
         this.playerPermutations = new Array();
@@ -512,7 +488,7 @@ class ActionsComputer {
     }
 }
 function isRolling(animation) {
-    return animation === exports.State.ROLL_BACKWARD || animation === exports.State.ROLL_FORWARD;
+    return animation === info.state.ROLL_BACKWARD || animation === info.state.ROLL_FORWARD;
 }
 function didStartRoll(currentAnimation, previousAnimation) {
     const isCurrentlyRolling = isRolling(currentAnimation);
@@ -520,7 +496,7 @@ function didStartRoll(currentAnimation, previousAnimation) {
     return isCurrentlyRolling && !wasPreviouslyRolling;
 }
 function isSpotDodging(animation) {
-    return animation === exports.State.SPOT_DODGE;
+    return animation === info.state.SPOT_DODGE;
 }
 function didStartSpotDodge(currentAnimation, previousAnimation) {
     const isCurrentlyDodging = isSpotDodging(currentAnimation);
@@ -528,7 +504,7 @@ function didStartSpotDodge(currentAnimation, previousAnimation) {
     return isCurrentlyDodging && !wasPreviouslyDodging;
 }
 function isAirDodging(animation) {
-    return animation === exports.State.AIR_DODGE;
+    return animation === info.state.AIR_DODGE;
 }
 function didStartAirDodge(currentAnimation, previousAnimation) {
     const isCurrentlyDodging = isAirDodging(currentAnimation);
@@ -536,7 +512,7 @@ function didStartAirDodge(currentAnimation, previousAnimation) {
     return isCurrentlyDodging && !wasPreviouslyDodging;
 }
 function isGrabbingLedge(animation) {
-    return animation === exports.State.CLIFF_CATCH;
+    return animation === info.state.CLIFF_CATCH;
 }
 function didStartLedgegrab(currentAnimation, previousAnimation) {
     const isCurrentlyGrabbingLedge = isGrabbingLedge(currentAnimation);
@@ -572,10 +548,12 @@ function handleActionCompute(state, indices, frame) {
     // Handles wavedash detection (and waveland)
     handleActionWavedash(state.playerCounts, state.animations);
 }
+
+// LOOK WAVEDASHING HERE
 function handleActionWavedash(counts, animations) {
     const currentAnimation = _.last(animations);
     const prevAnimation = animations[animations.length - 2];
-    const isSpecialLanding = currentAnimation === exports.State.LANDING_FALL_SPECIAL;
+    const isSpecialLanding = currentAnimation === info.state.LANDING_FALL_SPECIAL;
     const isAcceptablePrevious = isWavedashInitiationAnimation(prevAnimation);
     const isPossibleWavedash = isSpecialLanding && isAcceptablePrevious;
     if (!isPossibleWavedash) {
@@ -586,17 +564,17 @@ function handleActionWavedash(counts, animations) {
     // wavedash. This number could be tweaked if we find false negatives
     const recentFrames = animations.slice(-8);
     const recentAnimations = _.keyBy(recentFrames, (animation) => animation);
-    if (_.size(recentAnimations) === 2 && recentAnimations[exports.State.AIR_DODGE]) {
+    if (_.size(recentAnimations) === 2 && recentAnimations[info.state.AIR_DODGE]) {
         // If the only other animation is air dodge, this might be really late to the point
         // where it was actually an air dodge. Air dodge animation is really long
         return;
     }
-    if (recentAnimations[exports.State.AIR_DODGE]) {
+    if (recentAnimations[info.state.AIR_DODGE]) {
         // If one of the recent animations was an air dodge, let's remove that from the
         // air dodge counter, we don't want to count air dodges used to wavedash/land
         counts.airDodgeCount -= 1;
     }
-    if (recentAnimations[exports.State.ACTION_KNEE_BEND]) {
+    if (recentAnimations[info.state.ACTION_KNEE_BEND]) {
         // If a jump was started recently, we will consider this a wavedash
         counts.wavedashCount += 1;
     }
@@ -606,11 +584,11 @@ function handleActionWavedash(counts, animations) {
     }
 }
 function isWavedashInitiationAnimation(animation) {
-    if (animation === exports.State.AIR_DODGE) {
+    if (animation === info.state.AIR_DODGE) {
         return true;
     }
-    const isAboveMin = animation >= exports.State.CONTROLLED_JUMP_START;
-    const isBelowMax = animation <= exports.State.CONTROLLED_JUMP_END;
+    const isAboveMin = animation >= info.state.CONTROLLED_JUMP_START;
+    const isBelowMax = animation <= info.state.CONTROLLED_JUMP_END;
     return isAboveMin && isBelowMax;
 }
 
@@ -1458,7 +1436,51 @@ class SlippiGame {
     }
 }
 /* eslint-enable no-param-reassign */
-
+exports.State = (() => {
+    let State = {};
+    // Animation ID ranges
+    State[State["DAMAGE_START"] = 75] = "DAMAGE_START";
+    State[State["DAMAGE_END"] = 91] = "DAMAGE_END";
+    State[State["CAPTURE_START"] = 223] = "CAPTURE_START";
+    State[State["CAPTURE_END"] = 232] = "CAPTURE_END";
+    State[State["GUARD_START"] = 178] = "GUARD_START";
+    State[State["GUARD_END"] = 182] = "GUARD_END";
+    State[State["GROUNDED_CONTROL_START"] = 14] = "GROUNDED_CONTROL_START";
+    State[State["GROUNDED_CONTROL_END"] = 24] = "GROUNDED_CONTROL_END";
+    State[State["SQUAT_START"] = 39] = "SQUAT_START";
+    State[State["SQUAT_END"] = 41] = "SQUAT_END";
+    State[State["DOWN_START"] = 183] = "DOWN_START";
+    State[State["DOWN_END"] = 198] = "DOWN_END";
+    State[State["TECH_START"] = 199] = "TECH_START";
+    State[State["TECH_END"] = 204] = "TECH_END";
+    State[State["DYING_START"] = 0] = "DYING_START";
+    State[State["DYING_END"] = 10] = "DYING_END";
+    State[State["CONTROLLED_JUMP_START"] = 24] = "CONTROLLED_JUMP_START";
+    State[State["CONTROLLED_JUMP_END"] = 34] = "CONTROLLED_JUMP_END";
+    State[State["GROUND_ATTACK_START"] = 44] = "GROUND_ATTACK_START";
+    State[State["GROUND_ATTACK_END"] = 64] = "GROUND_ATTACK_END";
+    // Animation ID specific
+    State[State["ROLL_FORWARD"] = 233] = "ROLL_FORWARD";
+    State[State["ROLL_BACKWARD"] = 234] = "ROLL_BACKWARD";
+    State[State["SPOT_DODGE"] = 235] = "SPOT_DODGE";
+    State[State["AIR_DODGE"] = 236] = "AIR_DODGE";
+    State[State["ACTION_WAIT"] = 14] = "ACTION_WAIT";
+    State[State["ACTION_DASH"] = 20] = "ACTION_DASH";
+    State[State["ACTION_KNEE_BEND"] = 24] = "ACTION_KNEE_BEND";
+    State[State["GUARD_ON"] = 178] = "GUARD_ON";
+    State[State["TECH_MISS_UP"] = 183] = "TECH_MISS_UP";
+    State[State["TECH_MISS_DOWN"] = 191] = "TECH_MISS_DOWN";
+    State[State["DASH"] = 20] = "DASH";
+    State[State["TURN"] = 18] = "TURN";
+    State[State["LANDING_FALL_SPECIAL"] = 43] = "LANDING_FALL_SPECIAL";
+    State[State["JUMP_FORWARD"] = 25] = "JUMP_FORWARD";
+    State[State["JUMP_BACKWARD"] = 26] = "JUMP_BACKWARD";
+    State[State["FALL_FORWARD"] = 30] = "FALL_FORWARD";
+    State[State["FALL_BACKWARD"] = 31] = "FALL_BACKWARD";
+    State[State["GRAB"] = 212] = "GRAB";
+    State[State["CLIFF_CATCH"] = 252] = "CLIFF_CATCH";
+    return State;
+})();
 // eslint-disable-next-line
 function getDeathDirection(actionStateId) {
     if (actionStateId > 0xa) {
@@ -1998,6 +2020,7 @@ exports.isDown = isDown;
 exports.isGrabbed = isGrabbed;
 exports.isInControl = isInControl;
 exports.isTeching = isTeching;
+exports.info = info;
 exports.moves = moves$1;
 exports.parseMessage = parseMessage;
 exports.stages = stages$1;
