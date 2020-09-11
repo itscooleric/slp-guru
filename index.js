@@ -1434,6 +1434,16 @@ class SlippiGame {
         }
         return this.input.filePath || null;
     }
+    getJSON(){
+        let obj = {
+            data:{
+                settings: this.getSettings(),
+                metadata: this.getMetadata(),
+                frames: this.getFrames(),
+            }
+        };
+        return obj;        
+    }
 }
 /* eslint-enable no-param-reassign */
 exports.State = (() => {
